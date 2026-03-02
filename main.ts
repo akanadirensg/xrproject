@@ -3,13 +3,13 @@
 import * as THREE from 'three';
 import { ARButton } from 'three/addons/webxr/ARButton.js';
 
-let container:any;
-let camera:any, scene:any, renderer:any;
-let controller1:any, controller2:any;
+let container;
+let camera : THREE.PerspectiveCamera, scene : THREE.Scene, renderer : THREE.WebGLRenderer;
+let controller1, controller2;
 
-let reticle:any;
+let reticle: THREE.Mesh;
 
-let hitTestSource:any = null;
+let hitTestSource: XRHitTestSource | null  = null;
 let hitTestSourceRequested = false;
 
 init();
@@ -29,7 +29,7 @@ function init() {
 
   //
 
-  const renderer = new THREE.WebGLRenderer( { antialias: true, alpha: true } );
+  renderer = new THREE.WebGLRenderer( { antialias: true, alpha: true } );
   renderer.setPixelRatio( window.devicePixelRatio );
   renderer.setSize( window.innerWidth, window.innerHeight );
   renderer.setAnimationLoop( animate );
@@ -91,58 +91,55 @@ function onWindowResize() {
 
 //
 
-function animate( timestamp:any, frame:any ) {
+function animate(timestamp: number, frame?: XRFrame) {
 
-  if ( frame ) {
+  if (frame) {
 
-    const referenceSpace = renderer.xr.getReferenceSpace();
-    const session = renderer.xr.getSession();
+    const referenceSpace: XRReferenceSpace = renderer.xr.getReferenceSpace()!;
+    const session: XRSession = renderer.xr.getSession()!;
 
-    if ( hitTestSourceRequested === false ) {
+    if (hitTestSourceRequested === false) {
 
-      session.requestReferenceSpace( 'viewer' ).then( function ( referenceSpace:any ) {
+      session.requestReferenceSpace('viewer').then((referenceSpace: XRReferenceSpace) => {
 
-        session.requestHitTestSource( { space: referenceSpace } ).then( function ( source:any ) {
+        session.requestHitTestSource?.({ space: referenceSpace })?.then((source: XRHitTestSource) => {
 
           hitTestSource = source;
 
-        } );
+        });
 
-      } );
+      });
 
-      session.addEventListener( 'end', function () {
+      session.addEventListener('end', () => {
 
         hitTestSourceRequested = false;
         hitTestSource = null;
 
-      } );
+      });
 
       hitTestSourceRequested = true;
 
     }
 
-    if ( hitTestSource ) {
+    if (hitTestSource) {
 
-      const hitTestResults = frame.getHitTestResults( hitTestSource );
+      const hitTestResults = frame.getHitTestResults(hitTestSource);
 
-      if ( hitTestResults.length ) {
+      if (hitTestResults.length) {
 
-        const hit = hitTestResults[ 0 ];
+        const hit = hitTestResults[0];
+        const pose = hit.getPose(referenceSpace);
 
-        reticle.visible = true;
-        reticle.matrix.fromArray( hit.getPose( referenceSpace ).transform.matrix );
+        if (pose) {
+          reticle.visible = true;
+          reticle.matrix.fromArray(pose.transform.matrix);
+        }
 
       } else {
-
         reticle.visible = false;
-
       }
-
     }
-
   }
 
-  renderer.render( scene, camera );
-
+  renderer.render(scene, camera);
 }
-

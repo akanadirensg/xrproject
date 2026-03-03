@@ -6,7 +6,7 @@ export function createBuilding(
   options: any,
 ): Promise<THREE.Group> {
   const { modelIndex = 0, position = new THREE.Vector3(0, 0, 0) } = options;
-  const modelPath = `/3dgame/models/Building 0${modelIndex}.glb`;
+  const modelPath = `/models/Building 0${modelIndex}.glb`;
 
   const buildingGroup = new THREE.Group();
   buildingGroup.position.copy(position);

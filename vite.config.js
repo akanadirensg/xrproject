@@ -4,7 +4,7 @@ import glsl from 'vite-plugin-glsl';
 import { injectIWER } from "@iwsdk/vite-plugin-iwer";
 
 export default defineConfig({
-    base: "/xrproject",
+    base: "/",
     clearScreen: false,
     optimizeDeps: {
         esbuildOptions: {
@@ -24,7 +24,7 @@ export default defineConfig({
     },
     server: {
         open: true,
-        allowedHosts: ['.trycloudflare.com']
+        allowedHosts: ['.trycloudflare.com', '.ngrok-free.dev']
     },
     plugins: [
         viteStaticCopy({

@@ -1,10 +1,13 @@
 "use strict";
 import * as THREE from "three";
 import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 import { createGround } from "./entities/ground";
 import { createCity } from "./entities/city";
 import { createMouse } from "./entities/mouse";
+import { show3DNotification } from "./entities/TextMesh";
+
 // import { createHUD } from "./hud";
 
 //  Constantes joueur
@@ -24,21 +27,19 @@ function computePoints(elapsedTime: number): number {
 //
 
 export function initScene(
-    scene: THREE.Scene,
-    camera: THREE.PerspectiveCamera,
-    renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.PerspectiveCamera,
+  renderer: THREE.WebGLRenderer,
 ) {
+
+  const world = new THREE.Group();
+  world.name = "WORLD_ROOT";
+  scene.add(world);
+  world.position.set(0, 0, 0);
   //  Scène
 //   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2("#b8f4f5", 0.018);
 
-//   const camera = new THREE.PerspectiveCamera(
-//     75,
-//     window.innerWidth / window.innerHeight,
-//     0.1,
-//     1000,
-//   );
-//   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor("#53EAED", 1);
@@ -47,7 +48,6 @@ export function initScene(
 //   container.appendChild(renderer.domElement);
 
   //  Groupes
-  const world = new THREE.Group();
   const groundGroup = new THREE.Group();
   const buildingsGroup = new THREE.Group();
   const roadsGroup = new THREE.Group();
@@ -69,8 +69,106 @@ export function initScene(
   dirLight.shadow.camera.far = 400;
   dirLight.shadow.camera.left = dirLight.shadow.camera.bottom = -80;
   dirLight.shadow.camera.right = dirLight.shadow.camera.top = 80;
-  scene.add(dirLight);
-  scene.add(new THREE.AmbientLight(0xd0f0ff, 0.9));
+  world.add(dirLight);
+  world.add(new THREE.AmbientLight(0xd0f0ff, 0.9));
+
+
+  const controller1 = renderer.xr.getController(0);
+  scene.add(controller1);
+
+  const laserGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1)
+  ]);
+
+  const laserMaterial = new THREE.LineBasicMaterial({
+    color: 0xff0000
+  });
+
+  const laser = new THREE.Line(laserGeometry, laserMaterial);
+  laser.name = "XR_LASER";
+  laser.scale.z = 5; 
+
+  controller1.add(laser);
+
+  
+  function shootEnergyBeam(
+    scene: THREE.Scene,
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    onComplete: () => void
+  ) {
+    if (!projectileModel) return; 
+
+    const projectile = projectileModel.clone(true);
+    projectile.position.copy(from);
+    scene.add(projectile);
+
+    const direction = new THREE.Vector3().subVectors(to, from);
+    const distance = direction.length();
+    direction.normalize();
+
+    const speed = 6;
+    let traveled = 0;
+
+    function animateProjectile() {
+      const step = 0.016 * speed;
+      traveled += step;
+
+      if (traveled < distance) {
+        projectile.position.addScaledVector(direction, step);
+
+        // Oriente le modèle vers la cible
+        projectile.lookAt(to);
+
+        requestAnimationFrame(animateProjectile);
+      } else {
+        scene.remove(projectile);
+        onComplete();
+      }
+    }
+
+    animateProjectile();
+  }
+  controller1.addEventListener('selectstart', onSelectStart);
+  controller1.addEventListener('selectend', onSelectEnd);
+
+  function onSelectStart(event: any) {
+    const controller = event.target;
+
+    const tempMatrix = new THREE.Matrix4();
+    tempMatrix.identity().extractRotation(controller.matrixWorld);
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix); 
+
+    const hits = raycaster.intersectObject(mouseData.group, true);
+
+    // if (hits.length > 0 && hits[0].distance < CATCH_DISTANCE && !mouseData.isCaught()) {
+    //   mouseData.catchAnimal();
+    //   if (controller.gamepad && controller.gamepad.hapticActuators?.length) {
+    //     controller.gamepad.hapticActuators[0].pulse(0.5, 100);
+    //   }
+    // }
+    if (hits.length > 0 && hits[0].distance < CATCH_DISTANCE && !mouseData.isCaught()) {
+
+    const start = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+    const end = hits[0].point.clone();
+
+    shootEnergyBeam(scene, start, end, () => {
+      mouseData.catchAnimal();
+    });
+
+    if (controller.gamepad && controller.gamepad.hapticActuators?.length) {
+      controller.gamepad.hapticActuators[0].pulse(0.5, 100);
+    }
+  }
+  }
+
+  function onSelectEnd(event: any) {
+    
+  }
 
 //   camera.position.set(4.5, PLAYER_HEIGHT, 8.5);
 
@@ -82,7 +180,7 @@ export function initScene(
 
   const bgMusic = new THREE.Audio(listener);
   let wantsMusic = false;
-  audioLoader.load("/xrproject/sounds/bg-sound.mp3", (buf) => {
+  audioLoader.load("/sounds/bg-sound.mp3", (buf) => {
     bgMusic.setBuffer(buf);
     bgMusic.setLoop(true);
     bgMusic.setVolume(0.3);
@@ -90,9 +188,18 @@ export function initScene(
   });
 
   const catchSound = new THREE.Audio(listener);
-  audioLoader.load("/xrproject/sounds/catch.mp3", (buf) => {
+  audioLoader.load("/sounds/catch.mp3", (buf) => {
     catchSound.setBuffer(buf);
     catchSound.setVolume(0.5);
+  });
+
+
+  const gltfLoader = new GLTFLoader();
+  let projectileModel: THREE.Object3D | null = null;
+
+  gltfLoader.load("/models/Bullet.glb", (gltf) => {
+    projectileModel = gltf.scene;
+    projectileModel?.scale.set(0.05, 0.05, 0.05); 
   });
 
   //  HUD
@@ -107,6 +214,7 @@ export function initScene(
     maxZ: citySize * spacing,
   };
 
+
   //  Créature (mode infini — se respawn automatiquement)
   const mouseData = createMouse(
     scene,
@@ -115,35 +223,33 @@ export function initScene(
     catchSound,
     cityBoundary,
     // hud.getElapsedTime,
-    // () => {
-    //   // Callback capture : score basé sur la difficulté courante
-    //   const points = computePoints(hud.getElapsedTime());
-    //   hud.addScore(points);
-    // },
+    () => {
+      show3DNotification(scene, camera, "Attrapé !");
+    }
   );
 
   //  Contrôles
   const controls = new PointerLockControls(camera, renderer.domElement);
   scene.add(controls.object);
 
-  renderer.domElement.addEventListener("click", () => {
-    controls.lock();
-    wantsMusic = true;
-    if (bgMusic.buffer && !bgMusic.isPlaying) bgMusic.play();
-  });
+  // renderer.domElement.addEventListener("click", () => {
+  //   controls.lock();
+  //   wantsMusic = true;
+  //   if (bgMusic.buffer && !bgMusic.isPlaying) bgMusic.play();
+  // });
 
-  const keys: Record<string, boolean> = {};
-  window.addEventListener("keydown", (e) => {
-    keys[e.code] = true;
-    // Touche Échap → quitter et afficher le leaderboard
-    if (e.code === "Escape" && controls.isLocked) {
-      // PointerLockControls gère déjà l'unlock sur Escape,
-      // on affiche le leaderboard au prochain unlock
-    }
-  });
-  window.addEventListener("keyup", (e) => {
-    keys[e.code] = false;
-  });
+  // const keys: Record<string, boolean> = {};
+  // window.addEventListener("keydown", (e) => {
+  //   keys[e.code] = true;
+  //   // Touche Échap → quitter et afficher le leaderboard
+  //   if (e.code === "Escape" && controls.isLocked) {
+  //     // PointerLockControls gère déjà l'unlock sur Escape,
+  //     // on affiche le leaderboard au prochain unlock
+  //   }
+  // });
+  // window.addEventListener("keyup", (e) => {
+  //   keys[e.code] = false;
+  // });
 
   // Afficher le leaderboard quand le joueur déverrouille volontairement (Escape)
   let hasShownLeaderboard = false;
@@ -222,39 +328,39 @@ export function initScene(
 
     // hud.update(delta);
 
-    if (controls.isLocked) {
-      const direction = new THREE.Vector3();
-      controls.getDirection(direction);
-      direction.y = 0;
-      direction.normalize();
-      const right = new THREE.Vector3()
-        .crossVectors(direction, camera.up)
-        .normalize();
+    // if (controls.isLocked) {
+    //   const direction = new THREE.Vector3();
+    //   controls.getDirection(direction);
+    //   direction.y = 0;
+    //   direction.normalize();
+    //   const right = new THREE.Vector3()
+    //     .crossVectors(direction, camera.up)
+    //     .normalize();
 
-    //   movePlayer(delta, direction, right);
+    // //   movePlayer(delta, direction, right);
 
-      if (keys["KeyE"]) {
-        const lookDir = new THREE.Vector3();
-        controls.getDirection(lookDir);
-        interactionRaycaster.set(camera.position, lookDir);
-        const hits = interactionRaycaster.intersectObject(
-          mouseData.group,
-          true,
-        );
-        if (
-          hits.length > 0 &&
-          hits[0].distance < CATCH_DISTANCE &&
-          !mouseData.isCaught()
-        ) {
-          mouseData.catchAnimal();
-          // Micro feedback caméra
-          camera.position.y += 0.05;
-          setTimeout(() => {
-            camera.position.y = PLAYER_HEIGHT;
-          }, 100);
-        }
-      }
-    }
+    //   if (keys["KeyE"]) {
+    //     const lookDir = new THREE.Vector3();
+    //     controls.getDirection(lookDir);
+    //     interactionRaycaster.set(camera.position, lookDir);
+    //     const hits = interactionRaycaster.intersectObject(
+    //       mouseData.group,
+    //       true,
+    //     );
+    //     if (
+    //       hits.length > 0 &&
+    //       hits[0].distance < CATCH_DISTANCE &&
+    //       !mouseData.isCaught()
+    //     ) {
+    //       mouseData.catchAnimal();
+    //       // Micro feedback caméra
+    //       camera.position.y += 0.05;
+    //       setTimeout(() => {
+    //         camera.position.y = PLAYER_HEIGHT;
+    //       }, 100);
+    //     }
+    //   }
+    // }
 
     mouseData.update(delta, camera.position);
 
@@ -270,6 +376,28 @@ export function initScene(
     // );
 
     for (const mixer of mixers) mixer.update(delta);
+
+
+    if (controller1) {
+
+      const tempMatrix = new THREE.Matrix4();
+      tempMatrix.identity().extractRotation(controller1.matrixWorld);
+
+      interactionRaycaster.ray.origin.setFromMatrixPosition(controller1.matrixWorld);
+      interactionRaycaster.ray.direction
+        .set(0, 0, -1)
+        .applyMatrix4(tempMatrix);
+
+      const hits = interactionRaycaster.intersectObject(mouseData.group, true);
+
+      if (hits.length > 0) {
+        laser.scale.z = hits[0].distance; 
+        laserMaterial.color.set(0x00ff00); 
+      } else {
+        laser.scale.z = 5; 
+        laserMaterial.color.set(0xff0000); 
+      }
+    }
     renderer.render(scene, camera);
   }
 
@@ -281,3 +409,47 @@ export function initScene(
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 }
+
+
+// function shootEnergyBeam(
+//   scene: THREE.Scene,
+//   from: THREE.Vector3,
+//   to: THREE.Vector3,
+//   onComplete: () => void
+// ) {
+//   const geometry = new THREE.SphereGeometry(0.03, 16, 16);
+//   const material = new THREE.MeshBasicMaterial({
+//     color: 0x00ffff,
+//   });
+
+//   const projectile = new THREE.Mesh(geometry, material);
+//   projectile.position.copy(from);
+//   scene.add(projectile);
+
+//   const direction = new THREE.Vector3().subVectors(to, from);
+//   const distance = direction.length();
+//   direction.normalize();
+
+//   const speed = 6; // vitesse de déplacement
+//   let traveled = 0;
+
+//   function animateProjectile(delta: number) {
+//     const step = speed * delta;
+//     traveled += step;
+
+//     if (traveled < distance) {
+//       projectile.position.addScaledVector(direction, step);
+//     } else {
+//       scene.remove(projectile);
+//       projectile.geometry.dispose();
+//       projectile.material.dispose();
+//       onComplete();
+//       return;
+//     }
+
+//     requestAnimationFrame(() => animateProjectile(0.016));
+//   }
+
+//   animateProjectile(0.016);
+// }
+

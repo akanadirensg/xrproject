@@ -13,10 +13,10 @@ const RESPAWN_DELAY = 2.0; // secondes avant réapparition
 //
 
 const MODELS = [
-  "/xrproject/models/Crab.gltf",
-  "/xrproject/models/Bee.gltf",
-  "/xrproject/models/Enemy.gltf",
-  "/xrproject/models/Skull.gltf",
+  "/models/Crab.gltf",
+  "/models/Bee.gltf",
+  "/models/Enemy.gltf",
+  "/models/Skull.gltf",
 ];
 
 export function createMouse(
@@ -26,7 +26,7 @@ export function createMouse(
   catchSound: THREE.Audio,
   cityBoundary: { minX: number; maxX: number; minZ: number; maxZ: number },
   // getElapsedTime: () => number,
-  // onCatch: () => void, // callback appelé à chaque capture (pour le score)
+  onCatch: () => void, // callback appelé à chaque capture (pour le score)
 ): {
   group: THREE.Group;
   update: (delta: number, playerPosition: THREE.Vector3) => void;
@@ -34,7 +34,12 @@ export function createMouse(
   isCaught: () => boolean;
 } {
   const group = new THREE.Group();
-  scene.add(group);
+  const world = scene.getObjectByName("WORLD_ROOT");
+  if (world) {
+    world.add(group);
+  } else {
+    scene.add(group);
+  }
 
   const loader = new GLTFLoader();
 
@@ -49,7 +54,8 @@ export function createMouse(
 
     loader.load(path, (gltf) => {
       const model = gltf.scene;
-      model.scale.set(0.3, 0.3, 0.3);
+      // model.scale.set(0.3, 0.3, 0.3);
+      model.scale.set(3, 3, 3);
       group.add(model);
 
       if (gltf.animations.length > 0) {
@@ -222,7 +228,7 @@ export function createMouse(
     group.visible = false;
     if (catchSound.isPlaying) catchSound.stop();
     catchSound.play();
-    // onCatch(); // notifie scene.ts → addScore()
+    onCatch(); 
   }
 
   return {

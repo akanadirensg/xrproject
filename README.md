@@ -1,135 +1,78 @@
-# three_vite_xr_ts
-THREE.js + WebXR template using [Vite](https://vitejs.dev).
+# City Mouse Chase XR
 
-Allows testing and modifying [official THREE.js WebXR examples](https://threejs.org/examples/?q=webxr) locally, at lightning speed.
+**City Mouse Chase XR** est une version en **réalité augmentée (WebXR)** du jeu original City Mouse Chase, développée avec **Three.js**.  
+Le joueur place une ville miniature dans le monde réel, puis interagit avec des créatures qui s’y déplacent en temps réel.
 
-## Batteries included
+---
 
-Pre-configured to support :
+## Concept
 
-- WebXR initialization
-- glTF file loading
-- ammo.js wasm physics library
-  - which is fast, but you might consider using the excellent and simpler [Cannon-es](https://fdoganis.github.io/slides/cannon.html) instead
-- VSCode launch scripts
-- THREE.js type definitions : for IntelliSense in VS Code
-- recommended VS Code extensions
-- deployment
+Le joueur utilise son appareil (mobile) pour :
 
-Have a look at vite.config.js and customize it to your needs (additional libraries, file formats etc.).
+1. Scanner une surface réelle (hit-test AR)
+2. Placer une ville 3D miniature
+3. Observer et interagir avec des créatures animées
+4. Les attraper via interaction XR (tap / contrôleur)
 
-## Installation
+---
 
-Install [Node.js](https://nodejs.org)
+## Fonctionnalités principales
 
-- Clone or download repo
-- run `npm install` : fetches and install all dependencies
-- `npm run dev` : launches a server and opens your browser in `https://localhost:5173` by default
-  - Edit your code : your changes are reflected instantly!
-- `npm run build` : packages all code and resources into the `dist` folder, ready for deployment.
+### Ville en réalité augmentée
+- Placement via **hit-test WebXR**
+- Échelle réduite (effet diorama)
+- Bâtiments GLB chargés dynamiquement
 
-## HTTPS
+### Interaction XR
+- Raycasting depuis contrôleur ou caméra
+- Feedback visuel (crosshair / laser)
+- Capture avec effet animé
 
-HTTPS is required to use the WebXR API
+### Intégration AR avancée
+- Shadow catcher → ombres réalistes sur le sol réel
+- Occlusion sol → masque le monde virtuel sous la surface détectée
+- Occlusion bâtiments → objets réels cachés derrière les bâtiments virtuels
 
+### Lighting réaliste (WebXR Light Estimation)
+- Utilisation de `requestLightProbe()`
+- Éclairage dynamique basé sur l’environnement réel
+- Direction et intensité lumineuse adaptées en temps réel
 
-### Using Cloudflare Tunnel for free without an account or a domain (recommended)
+---
 
-  - Install [Homebrew](https://brew.sh)
+## Technologies utilisées
 
-```bash
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
+- Three.js (WebXR, rendering, animations)
+- GLTFLoader (modèles 3D)
+- Raycaster (interactions)
+- WebXR API (ARButton, hit-test, light estimation)
 
-then follow instructions
+---
 
+##  Raycasting
 
-```bash
-echo >> /Users/XXX/.zprofile
+Utilisé pour :
 
-echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> /Users/XXX/.zprofile
+- Interaction joueur → viser et attraper les créatures
+- IA → détection d’obstacles et navigation
 
-eval "$(/opt/homebrew/bin/brew shellenv)"
-```
+---
 
-  - **[Install `cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)**
+## Gestion des collisions
 
-```bash
-brew install cloudflared
-```
-- run your app locally
+### Joueur / environnement
+- Basé sur AABB (THREE.Box3)
+- Empêche les intersections avec bâtiments
 
-```bash
-npm run dev
-```
+### Créatures / bâtiments
+- Vérification avant chaque déplacement
+- Si collision :
+  - Mouvement annulé
+  - Nouvelle direction aléatoire
 
-- run `cloudflared` tunnel
-
-```bash
-cloudflared tunnel --url http://localhost:5173/
-```
-
-This will create a random temporary address ending in `*.trycloudflare.com`
-
-You can share this address by sending a link or by generating a QR code (very useful for mobile devices and some XR headsets).
-
-### Persistent link
-
-If you want more persistence, you should register a domain name, or connect your github account to [Cloudflare Pages](https://pages.cloudflare.com) for free.
-
-Alternatively, you could simply [use GitHub Pages to host your application persistently](https://sbcode.net/threejs/github-pages/).
-
-### Tunneling alternatives
-
-Check these tunneling alternatives such as `ngrok` or `zrok` for simple personal projects, use [tunneling solutions](https://github.com/anderspitman/awesome-tunneling) 
+---
 
 
-### Manual HTTPS setup
+## Objectif
 
-In order to use `https`, copy your certificates to the `.cert` folder, and change the `serve` command to:
-
-`"serve": "http-server dist -S -C .cert/cert.pem -K .cert/key.pem`
-
-## Deploying the App with GitHub Pages
-
-(original: https://github.com/meta-quest/webxr-first-steps?tab=readme-ov-file#build-and-deploy)
-
-This repository includes a ready-to-use GitHub Actions workflow located at `.github/workflows/deploy.yml`, which automates both the build and deployment to GitHub Pages. Once enabled, every time you push changes to the `main` branch, a new build will automatically be deployed.
-
-#### Steps to Enable GitHub Pages Deployment:
-
-0. **IMPORTANT: Set the `base` variable** in `vite.config.js` (default name `/three_vite_xr`) to the actual name of your repository. Your app will be deployed to https://[GITUSERNAME].github.io/[REPOSITORY_NAME] (for example https://fdoganis.github.io/three_vite_xr)
-1. **Fork this repository** to your own GitHub account.
-2. Navigate to your forked repository’s **Settings**.
-3. Scroll down to the **Pages** section.
-4. Under **Build and Deployment**, change the **Source** to **GitHub Actions**.
-
-Once this is set, GitHub Actions will handle the build and deployment process automatically. Any time you push changes to the `main` branch, the app will be built and deployed to GitHub Pages without any additional manual steps.
-
-You can monitor the status of the deployment job or manually re-run it via the **Actions** tab in your GitHub repository.
-
-### Deploying to Your Own Hosting Solution
-
-If you prefer to host the app yourself, you’ll need to manually build the app and then deploy the generated files to your hosting provider.
-
-To generate the build, run the following command:
-
-```bash
-npm run build
-```
-
-This will create a `dist` folder containing the static files for the app. You can then upload these files to your hosting platform of choice.
-
-
-# Credits
-
-- XR enhanced version of the original ```three_vite``` template : https://github.com/fdoganis/three_vite (MIT License)
-  
-- THREE.js WebXR code inspired by https://threejs.org/examples/webxr_ar_cones.html (MIT License)
-
-- Test model (red cube) from https://github.com/cx20/gltf-test/tree/master/sampleModels/Box (CC BY License)
-
-- Some very interesting features (emulator, github pages deployment) have been borrowed from https://github.com/meta-quest/webxr-first-steps  (MIT License)
-
-  - Make sure to check this excellent tutorial out! Even if it is mostly focused on VR, it is a great introduction on how to combine WebXR with THREE.js.
-  - See [Deployment Instructions](https://github.com/meta-quest/webxr-first-steps?tab=readme-ov-file#build-and-deploy)
+Créer une expérience immersive où le joueur interagit avec un monde virtuel intégré dans son environnement réel, en exploitant pleinement les capacités de la réalité augmentée moderne.

@@ -12,10 +12,10 @@ const RESPAWN_DELAY = 2.0;
 const ANIMAL_RADIUS = 0.5;
 
 const MODELS = [
-  "/models/Crab.gltf",
-  "/models/Bee.gltf",
-  "/models/Enemy.gltf",
-  "/models/Skull.gltf",
+  "/xrproject/models/Crab.gltf",
+  "/xrproject/models/Bee.gltf",
+  "/xrproject/models/Enemy.gltf",
+  "/xrproject/models/Skull.gltf",
 ];
 
 export function createMouse(

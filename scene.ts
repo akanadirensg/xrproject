@@ -195,7 +195,7 @@ export function initScene(
 
   const bgMusic = new THREE.Audio(listener);
   let wantsMusic = false;
-  audioLoader.load("/sounds/bg-sound.mp3", (buf) => {
+  audioLoader.load("/xrproject/sounds/bg-sound.mp3", (buf) => {
     bgMusic.setBuffer(buf);
     bgMusic.setLoop(true);
     bgMusic.setVolume(0.3);
@@ -203,14 +203,14 @@ export function initScene(
   });
 
   const catchSound = new THREE.Audio(listener);
-  audioLoader.load("/sounds/catch.mp3", (buf) => {
+  audioLoader.load("/xrproject/sounds/catch.mp3", (buf) => {
     catchSound.setBuffer(buf);
     catchSound.setVolume(0.5);
   });
 
   const gltfLoader = new GLTFLoader();
   let projectileModel: THREE.Object3D | null = null;
-  gltfLoader.load("/models/Bullet.glb", (gltf) => {
+  gltfLoader.load("/xrproject/models/Bullet.glb", (gltf) => {
     projectileModel = gltf.scene;
     projectileModel?.scale.set(0.05, 0.05, 0.05);
   });

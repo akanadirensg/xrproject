@@ -8,36 +8,20 @@ import { createCity } from "./entities/city";
 import { createMouse } from "./entities/mouse";
 import { show3DNotification } from "./entities/TextMesh";
 
-// import { createHUD } from "./hud";
-
-//  Constantes joueur
-const PLAYER_ACCELERATION = 6;
 const PLAYER_RADIUS = 0.4;
 const CATCH_DISTANCE = 3;
 const PLAYER_HEIGHT = 0.5;
-
-//  Score
-const BASE_POINTS = 100;
-
-function computePoints(elapsedTime: number): number {
-  // La valeur d'une capture augmente avec la difficulté (temps écoulé)
-  const difficultyMultiplier = 1 + Math.floor(elapsedTime / 30);
-  return BASE_POINTS * difficultyMultiplier;
-}
-//
 
 export function initScene(
   scene: THREE.Scene,
   camera: THREE.PerspectiveCamera,
   renderer: THREE.WebGLRenderer,
 ) {
-
   const world = new THREE.Group();
   world.name = "WORLD_ROOT";
   scene.add(world);
   world.position.set(0, 0, 0);
-  //  Scène
-//   const scene = new THREE.Scene();
+
   scene.fog = new THREE.FogExp2("#b8f4f5", 0.018);
 
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -45,13 +29,10 @@ export function initScene(
   renderer.setClearColor("#53EAED", 1);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-//   container.appendChild(renderer.domElement);
 
-  //  Groupes
   const groundGroup = new THREE.Group();
   const buildingsGroup = new THREE.Group();
   const roadsGroup = new THREE.Group();
-  scene.add(world);
   world.add(groundGroup);
   world.add(buildingsGroup);
   world.add(roadsGroup);
@@ -60,7 +41,7 @@ export function initScene(
   const citySize = 5;
   createCity(buildingsGroup, roadsGroup, citySize);
 
-  //  Lumières
+  // --- Lumières principales ---
   const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.4);
   dirLight.position.set(60, 120, 60);
   dirLight.castShadow = true;
@@ -70,109 +51,143 @@ export function initScene(
   dirLight.shadow.camera.left = dirLight.shadow.camera.bottom = -80;
   dirLight.shadow.camera.right = dirLight.shadow.camera.top = 80;
   world.add(dirLight);
-  world.add(new THREE.AmbientLight(0xd0f0ff, 0.9));
 
+  const ambientLight = new THREE.AmbientLight(0xd0f0ff, 0.9);
+  world.add(ambientLight);
 
+  // --- XR Lighting Estimation ---
+  let xrLightEstimation = false;
+  let lightProbe: THREE.LightProbe | null = null;
+  let estimationDirectionalLight: THREE.DirectionalLight | null = null;
+
+  function setupXRLightEstimation(session: XRSession) {
+    if (!("requestLightProbe" in session)) return;
+
+    (session as any)
+      .requestLightProbe()
+      .then((probe: any) => {
+        xrLightEstimation = true;
+
+        lightProbe = new THREE.LightProbe();
+        world.add(lightProbe!);
+
+        estimationDirectionalLight = new THREE.DirectionalLight(0xffffff, 0);
+        estimationDirectionalLight.castShadow = true;
+        estimationDirectionalLight.shadow.mapSize.set(1024, 1024);
+        estimationDirectionalLight.shadow.camera.near = 0.1;
+        estimationDirectionalLight.shadow.camera.far = 20;
+        estimationDirectionalLight.shadow.camera.left = -5;
+        estimationDirectionalLight.shadow.camera.right = 5;
+        estimationDirectionalLight.shadow.camera.top = 5;
+        estimationDirectionalLight.shadow.camera.bottom = -5;
+        world.add(estimationDirectionalLight!);
+
+        dirLight.intensity = 0;
+        ambientLight.intensity = 0;
+
+        probe.addEventListener("reflectionchange", () => {
+          if (!lightProbe) return;
+          const sh = probe.probeSphericalHarmonics;
+          if (sh) lightProbe.sh.fromArray(sh.coefficients);
+        });
+      })
+      .catch(() => {});
+  }
+
+  function updateXRLightEstimation(
+    frame: XRFrame,
+    referenceSpace: XRReferenceSpace,
+  ) {
+    if (!xrLightEstimation || !estimationDirectionalLight) return;
+    const lightEstimate = (frame as any).getLightEstimate?.(
+      (frame as any).session?.preferredReflectionFormat ? undefined : undefined,
+    );
+    if (!lightEstimate) return;
+
+    const intensity = Math.max(
+      lightEstimate.primaryLightIntensity?.x ?? 1,
+      0.01,
+    );
+    estimationDirectionalLight.intensity = intensity;
+
+    const dir = lightEstimate.primaryLightDirection;
+    if (dir) {
+      estimationDirectionalLight.position.set(
+        -dir.x * 10,
+        -dir.y * 10 + 5,
+        -dir.z * 10,
+      );
+    }
+  }
+
+  // --- Ombre virtuelle sur sol réel (shadow catcher) ---
+  const shadowCatcherGeometry = new THREE.PlaneGeometry(200, 200);
+  const shadowCatcherMaterial = new THREE.ShadowMaterial({
+    opacity: 0.4,
+    transparent: true,
+    depthWrite: false,
+  });
+  const shadowCatcher = new THREE.Mesh(
+    shadowCatcherGeometry,
+    shadowCatcherMaterial,
+  );
+  shadowCatcher.rotation.x = -Math.PI / 2;
+  shadowCatcher.receiveShadow = true;
+  shadowCatcher.renderOrder = -1;
+  world.add(shadowCatcher);
+
+  // --- Occlusion mesh (sol invisible qui masque le réel) ---
+  const occlusionGeometry = new THREE.PlaneGeometry(200, 200);
+  const occlusionMaterial = new THREE.MeshBasicMaterial({
+    colorWrite: false,
+    depthWrite: true,
+    side: THREE.DoubleSide,
+  });
+  const occlusionMesh = new THREE.Mesh(occlusionGeometry, occlusionMaterial);
+  occlusionMesh.rotation.x = -Math.PI / 2;
+  occlusionMesh.position.y = -0.001;
+  occlusionMesh.renderOrder = -2;
+  world.add(occlusionMesh);
+
+  // --- Occlusion bâtiments : chaque building a un mesh invisible depth-only ---
+  function addOcclusionToBuildings() {
+    buildingsGroup.traverse((child) => {
+      if (!(child as THREE.Mesh).isMesh) return;
+      const mesh = child as THREE.Mesh;
+      if (mesh.userData.occlusionAdded) return;
+      mesh.userData.occlusionAdded = true;
+
+      const occluder = new THREE.Mesh(
+        mesh.geometry,
+        new THREE.MeshBasicMaterial({
+          colorWrite: false,
+          depthWrite: true,
+          side: THREE.FrontSide,
+        }),
+      );
+      occluder.renderOrder = -1;
+      occluder.position.copy(mesh.position);
+      occluder.rotation.copy(mesh.rotation);
+      occluder.scale.copy(mesh.scale);
+      mesh.parent?.add(occluder);
+    });
+  }
+  setTimeout(addOcclusionToBuildings, 3000);
+
+  // --- Contrôleur XR ---
   const controller1 = renderer.xr.getController(0);
   scene.add(controller1);
 
   const laserGeometry = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1)
+    new THREE.Vector3(0, 0, -1),
   ]);
-
-  const laserMaterial = new THREE.LineBasicMaterial({
-    color: 0xff0000
-  });
-
+  const laserMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
   const laser = new THREE.Line(laserGeometry, laserMaterial);
   laser.name = "XR_LASER";
-  laser.scale.z = 5; 
-
+  laser.scale.z = 5;
   controller1.add(laser);
 
-  
-  function shootEnergyBeam(
-    scene: THREE.Scene,
-    from: THREE.Vector3,
-    to: THREE.Vector3,
-    onComplete: () => void
-  ) {
-    if (!projectileModel) return; 
-
-    const projectile = projectileModel.clone(true);
-    projectile.position.copy(from);
-    scene.add(projectile);
-
-    const direction = new THREE.Vector3().subVectors(to, from);
-    const distance = direction.length();
-    direction.normalize();
-
-    const speed = 6;
-    let traveled = 0;
-
-    function animateProjectile() {
-      const step = 0.016 * speed;
-      traveled += step;
-
-      if (traveled < distance) {
-        projectile.position.addScaledVector(direction, step);
-
-        // Oriente le modèle vers la cible
-        projectile.lookAt(to);
-
-        requestAnimationFrame(animateProjectile);
-      } else {
-        scene.remove(projectile);
-        onComplete();
-      }
-    }
-
-    animateProjectile();
-  }
-  controller1.addEventListener('selectstart', onSelectStart);
-  controller1.addEventListener('selectend', onSelectEnd);
-
-  function onSelectStart(event: any) {
-    const controller = event.target;
-
-    const tempMatrix = new THREE.Matrix4();
-    tempMatrix.identity().extractRotation(controller.matrixWorld);
-
-    const raycaster = new THREE.Raycaster();
-    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix); 
-
-    const hits = raycaster.intersectObject(mouseData.group, true);
-
-    // if (hits.length > 0 && hits[0].distance < CATCH_DISTANCE && !mouseData.isCaught()) {
-    //   mouseData.catchAnimal();
-    //   if (controller.gamepad && controller.gamepad.hapticActuators?.length) {
-    //     controller.gamepad.hapticActuators[0].pulse(0.5, 100);
-    //   }
-    // }
-    if (hits.length > 0 && hits[0].distance < CATCH_DISTANCE && !mouseData.isCaught()) {
-
-    const start = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
-    const end = hits[0].point.clone();
-
-    shootEnergyBeam(scene, start, end, () => {
-      mouseData.catchAnimal();
-    });
-
-    if (controller.gamepad && controller.gamepad.hapticActuators?.length) {
-      controller.gamepad.hapticActuators[0].pulse(0.5, 100);
-    }
-  }
-  }
-
-  function onSelectEnd(event: any) {
-    
-  }
-
-//   camera.position.set(4.5, PLAYER_HEIGHT, 8.5);
-
-  //  Audio
   const mixers: THREE.AnimationMixer[] = [];
   const listener = new THREE.AudioListener();
   camera.add(listener);
@@ -193,19 +208,13 @@ export function initScene(
     catchSound.setVolume(0.5);
   });
 
-
   const gltfLoader = new GLTFLoader();
   let projectileModel: THREE.Object3D | null = null;
-
   gltfLoader.load("/models/Bullet.glb", (gltf) => {
     projectileModel = gltf.scene;
-    projectileModel?.scale.set(0.05, 0.05, 0.05); 
+    projectileModel?.scale.set(0.05, 0.05, 0.05);
   });
 
-  //  HUD
-//   const hud = createHUD();
-
-  //  Limites
   const spacing = 8;
   const cityBoundary = {
     minX: -citySize * spacing,
@@ -214,190 +223,156 @@ export function initScene(
     maxZ: citySize * spacing,
   };
 
-
-  //  Créature (mode infini — se respawn automatiquement)
   const mouseData = createMouse(
     scene,
     mixers,
     [buildingsGroup],
     catchSound,
     cityBoundary,
-    // hud.getElapsedTime,
     () => {
       show3DNotification(scene, camera, "Attrapé !");
-    }
+    },
   );
 
-  //  Contrôles
+  setTimeout(() => {
+    mouseData.refreshBuildingBoxes();
+  }, 3000);
+
+  function shootEnergyBeam(
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    onComplete: () => void,
+  ) {
+    if (!projectileModel) {
+      onComplete();
+      return;
+    }
+
+    const projectile = projectileModel.clone(true);
+    projectile.position.copy(from);
+    scene.add(projectile);
+
+    const direction = new THREE.Vector3().subVectors(to, from);
+    const distance = direction.length();
+    direction.normalize();
+
+    const speed = 6;
+    let traveled = 0;
+
+    function animateProjectile() {
+      const step = 0.016 * speed;
+      traveled += step;
+      if (traveled < distance) {
+        projectile.position.addScaledVector(direction, step);
+        projectile.lookAt(to);
+        requestAnimationFrame(animateProjectile);
+      } else {
+        scene.remove(projectile);
+        onComplete();
+      }
+    }
+
+    animateProjectile();
+  }
+
+  function onSelectStart(event: any) {
+    const controller = event.target;
+    const tempMatrix = new THREE.Matrix4();
+    tempMatrix.identity().extractRotation(controller.matrixWorld);
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+    const hits = raycaster.intersectObject(mouseData.group, true);
+
+    if (
+      hits.length > 0 &&
+      hits[0].distance < CATCH_DISTANCE &&
+      !mouseData.isCaught()
+    ) {
+      const start = new THREE.Vector3().setFromMatrixPosition(
+        controller.matrixWorld,
+      );
+      const end = hits[0].point.clone();
+
+      shootEnergyBeam(start, end, () => {
+        mouseData.catchAnimal();
+      });
+
+      if (controller.gamepad && controller.gamepad.hapticActuators?.length) {
+        controller.gamepad.hapticActuators[0].pulse(0.5, 100);
+      }
+    }
+  }
+
+  controller1.addEventListener("selectstart", onSelectStart);
+
   const controls = new PointerLockControls(camera, renderer.domElement);
   scene.add(controls.object);
 
-  // renderer.domElement.addEventListener("click", () => {
-  //   controls.lock();
-  //   wantsMusic = true;
-  //   if (bgMusic.buffer && !bgMusic.isPlaying) bgMusic.play();
-  // });
-
-  // const keys: Record<string, boolean> = {};
-  // window.addEventListener("keydown", (e) => {
-  //   keys[e.code] = true;
-  //   // Touche Échap → quitter et afficher le leaderboard
-  //   if (e.code === "Escape" && controls.isLocked) {
-  //     // PointerLockControls gère déjà l'unlock sur Escape,
-  //     // on affiche le leaderboard au prochain unlock
-  //   }
-  // });
-  // window.addEventListener("keyup", (e) => {
-  //   keys[e.code] = false;
-  // });
-
-  // Afficher le leaderboard quand le joueur déverrouille volontairement (Escape)
-  let hasShownLeaderboard = false;
-//   controls.addEventListener("unlock", () => {
-//     if (!hasShownLeaderboard && hud.getScore() >= 0) {
-//       // Petit délai pour laisser le temps au joueur de voir ce qui se passe
-//       setTimeout(() => {
-//         if (!hasShownLeaderboard) {
-//           hasShownLeaderboard = true;
-//           if (bgMusic.isPlaying) bgMusic.stop();
-//           hud.showLeaderboard(hud.getScore());
-//         }
-//       }, 400);
-//     }
-//   });
-
-  //  Collisions bâtiments
-  const buildingBoxes: THREE.Box3[] = [];
-
-  function refreshBuildingBoxes() {
-    buildingBoxes.length = 0;
-    buildingsGroup.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        const box = new THREE.Box3().setFromObject(child);
-        box.expandByScalar(PLAYER_RADIUS);
-        buildingBoxes.push(box);
-      }
-    });
-  }
-  setTimeout(refreshBuildingBoxes, 2000);
-
-  function collidesWithBuildings(pos: THREE.Vector3): boolean {
-    const testBox = new THREE.Box3(
-      new THREE.Vector3(pos.x - PLAYER_RADIUS, 0, pos.z - PLAYER_RADIUS),
-      new THREE.Vector3(pos.x + PLAYER_RADIUS, 2, pos.z + PLAYER_RADIUS),
-    );
-    return buildingBoxes.some((box) => box.intersectsBox(testBox));
-  }
-
-//   function movePlayer(
-//     delta: number,
-//     direction: THREE.Vector3,
-//     right: THREE.Vector3,
-//   ) {
-//     const dist = PLAYER_ACCELERATION * delta;
-//     const desired = new THREE.Vector3();
-//     if (keys["KeyW"] || keys["ArrowUp"])
-//       desired.addScaledVector(direction, dist);
-//     if (keys["KeyS"] || keys["ArrowDown"])
-//       desired.addScaledVector(direction, -dist);
-//     if (keys["KeyA"] || keys["ArrowLeft"])
-//       desired.addScaledVector(right, -dist);
-//     if (keys["KeyD"] || keys["ArrowRight"])
-//       desired.addScaledVector(right, dist);
-
-//     const posX = camera.position.clone();
-//     posX.x += desired.x;
-//     if (!collidesWithBuildings(posX)) camera.position.x = posX.x;
-
-//     const posZ = camera.position.clone();
-//     posZ.z += desired.z;
-//     if (!collidesWithBuildings(posZ)) camera.position.z = posZ.z;
-
-//     camera.position.y = PLAYER_HEIGHT;
-//   }
-
-  // Raycaster interaction
   const interactionRaycaster = new THREE.Raycaster();
-
-  // Boucle principale
   const clock = new THREE.Clock();
 
-  function animate() {
+  // --- Écoute session XR pour lighting estimation ---
+  renderer.xr.addEventListener("sessionstart", () => {
+    const session = renderer.xr.getSession();
+    if (session) setupXRLightEstimation(session);
+
+    // En mode XR, cacher le sol visible (le shadow catcher suffit)
+    groundGroup.visible = false;
+  });
+
+  renderer.xr.addEventListener("sessionend", () => {
+    groundGroup.visible = true;
+    dirLight.intensity = 1.4;
+    ambientLight.intensity = 0.9;
+    xrLightEstimation = false;
+    if (lightProbe) {
+      world.remove(lightProbe);
+      lightProbe = null;
+    }
+    if (estimationDirectionalLight) {
+      world.remove(estimationDirectionalLight);
+      estimationDirectionalLight = null;
+    }
+  });
+
+  function animate(timestamp?: number, frame?: XRFrame) {
     renderer.setAnimationLoop(animate);
     const delta = Math.min(clock.getDelta(), 0.05);
 
-    // hud.update(delta);
-
-    // if (controls.isLocked) {
-    //   const direction = new THREE.Vector3();
-    //   controls.getDirection(direction);
-    //   direction.y = 0;
-    //   direction.normalize();
-    //   const right = new THREE.Vector3()
-    //     .crossVectors(direction, camera.up)
-    //     .normalize();
-
-    // //   movePlayer(delta, direction, right);
-
-    //   if (keys["KeyE"]) {
-    //     const lookDir = new THREE.Vector3();
-    //     controls.getDirection(lookDir);
-    //     interactionRaycaster.set(camera.position, lookDir);
-    //     const hits = interactionRaycaster.intersectObject(
-    //       mouseData.group,
-    //       true,
-    //     );
-    //     if (
-    //       hits.length > 0 &&
-    //       hits[0].distance < CATCH_DISTANCE &&
-    //       !mouseData.isCaught()
-    //     ) {
-    //       mouseData.catchAnimal();
-    //       // Micro feedback caméra
-    //       camera.position.y += 0.05;
-    //       setTimeout(() => {
-    //         camera.position.y = PLAYER_HEIGHT;
-    //       }, 100);
-    //     }
-    //   }
-    // }
+    if (frame) {
+      const referenceSpace = renderer.xr.getReferenceSpace();
+      if (referenceSpace) {
+        updateXRLightEstimation(frame, referenceSpace as XRReferenceSpace);
+      }
+    }
 
     mouseData.update(delta, camera.position);
 
-    // Prompt contextuel "Appuie sur E"
-    const lookDir = new THREE.Vector3();
-    controls.getDirection(lookDir);
-    interactionRaycaster.set(camera.position, lookDir);
-    const hits = interactionRaycaster.intersectObject(mouseData.group, true);
-    // hud.showCatchPrompt(
-    //   !mouseData.isCaught() &&
-    //     hits.length > 0 &&
-    //     hits[0].distance < CATCH_DISTANCE,
-    // );
-
     for (const mixer of mixers) mixer.update(delta);
 
-
     if (controller1) {
-
       const tempMatrix = new THREE.Matrix4();
       tempMatrix.identity().extractRotation(controller1.matrixWorld);
 
-      interactionRaycaster.ray.origin.setFromMatrixPosition(controller1.matrixWorld);
-      interactionRaycaster.ray.direction
-        .set(0, 0, -1)
-        .applyMatrix4(tempMatrix);
+      interactionRaycaster.ray.origin.setFromMatrixPosition(
+        controller1.matrixWorld,
+      );
+      interactionRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
 
       const hits = interactionRaycaster.intersectObject(mouseData.group, true);
 
       if (hits.length > 0) {
-        laser.scale.z = hits[0].distance; 
-        laserMaterial.color.set(0x00ff00); 
+        laser.scale.z = hits[0].distance;
+        laserMaterial.color.set(0x00ff00);
       } else {
-        laser.scale.z = 5; 
-        laserMaterial.color.set(0xff0000); 
+        laser.scale.z = 5;
+        laserMaterial.color.set(0xff0000);
       }
     }
+
     renderer.render(scene, camera);
   }
 
@@ -409,47 +384,3 @@ export function initScene(
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 }
-
-
-// function shootEnergyBeam(
-//   scene: THREE.Scene,
-//   from: THREE.Vector3,
-//   to: THREE.Vector3,
-//   onComplete: () => void
-// ) {
-//   const geometry = new THREE.SphereGeometry(0.03, 16, 16);
-//   const material = new THREE.MeshBasicMaterial({
-//     color: 0x00ffff,
-//   });
-
-//   const projectile = new THREE.Mesh(geometry, material);
-//   projectile.position.copy(from);
-//   scene.add(projectile);
-
-//   const direction = new THREE.Vector3().subVectors(to, from);
-//   const distance = direction.length();
-//   direction.normalize();
-
-//   const speed = 6; // vitesse de déplacement
-//   let traveled = 0;
-
-//   function animateProjectile(delta: number) {
-//     const step = speed * delta;
-//     traveled += step;
-
-//     if (traveled < distance) {
-//       projectile.position.addScaledVector(direction, step);
-//     } else {
-//       scene.remove(projectile);
-//       projectile.geometry.dispose();
-//       projectile.material.dispose();
-//       onComplete();
-//       return;
-//     }
-
-//     requestAnimationFrame(() => animateProjectile(0.016));
-//   }
-
-//   animateProjectile(0.016);
-// }
-

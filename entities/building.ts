@@ -19,7 +19,6 @@ export function createBuilding(
       (gltf) => {
         const model = gltf.scene;
 
-        // Définir le scale selon le modèle
         let scale = 1;
         if (modelIndex === 0) scale = 12;
         else if (modelIndex === 1) scale = 2;
@@ -28,11 +27,16 @@ export function createBuilding(
 
         model.scale.set(scale, scale, scale);
 
-        // Calculer la bounding box **après scale**
+        model.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+
         const box = new THREE.Box3().setFromObject(model);
         const height = box.max.y - box.min.y;
 
-        // Ajuster la position verticale
         if (modelIndex === 0) model.position.y = height / 2 + 3;
         else if (modelIndex === 1) model.position.y = 0;
         else if (modelIndex === 2) model.position.y = height / 2;

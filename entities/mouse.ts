@@ -2,15 +2,14 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
-//  Tunables
 const BASE_SPEED = 2.2;
 const MAX_SPEED = 7.5;
 const FLEE_RADIUS = 12;
 const FLEE_RADIUS_SQ = FLEE_RADIUS * FLEE_RADIUS;
 const WANDER_CHANGE_INTERVAL: [number, number] = [0.8, 2.5];
 const COLLIDER_DISTANCE = 0.8;
-const RESPAWN_DELAY = 2.0; // secondes avant réapparition
-//
+const RESPAWN_DELAY = 2.0;
+const ANIMAL_RADIUS = 0.5;
 
 const MODELS = [
   "/models/Crab.gltf",
@@ -25,13 +24,13 @@ export function createMouse(
   obstacles: THREE.Object3D[],
   catchSound: THREE.Audio,
   cityBoundary: { minX: number; maxX: number; minZ: number; maxZ: number },
-  // getElapsedTime: () => number,
-  onCatch: () => void, // callback appelé à chaque capture (pour le score)
+  onCatch: () => void,
 ): {
   group: THREE.Group;
   update: (delta: number, playerPosition: THREE.Vector3) => void;
   catchAnimal: () => void;
   isCaught: () => boolean;
+  refreshBuildingBoxes: () => void;
 } {
   const group = new THREE.Group();
   const world = scene.getObjectByName("WORLD_ROOT");
@@ -42,20 +41,44 @@ export function createMouse(
   }
 
   const loader = new GLTFLoader();
-
-  //  Chargement du modèle
   let mixer: THREE.AnimationMixer | null = null;
+  const buildingBoxes: THREE.Box3[] = [];
+
+  function refreshBuildingBoxes() {
+    buildingBoxes.length = 0;
+    for (const obstacle of obstacles) {
+      obstacle.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const box = new THREE.Box3().setFromObject(child);
+          box.expandByScalar(ANIMAL_RADIUS);
+          buildingBoxes.push(box);
+        }
+      });
+    }
+  }
+
+  function collidesWithBuildings(pos: THREE.Vector3): boolean {
+    const testBox = new THREE.Box3(
+      new THREE.Vector3(pos.x - ANIMAL_RADIUS, 0, pos.z - ANIMAL_RADIUS),
+      new THREE.Vector3(pos.x + ANIMAL_RADIUS, 1.5, pos.z + ANIMAL_RADIUS),
+    );
+    return buildingBoxes.some((box) => box.intersectsBox(testBox));
+  }
 
   function loadModel() {
     const path = MODELS[Math.floor(Math.random() * MODELS.length)];
-    // Vider le groupe
     while (group.children.length) group.remove(group.children[0]);
     mixer = null;
 
     loader.load(path, (gltf) => {
       const model = gltf.scene;
-      // model.scale.set(0.3, 0.3, 0.3);
       model.scale.set(3, 3, 3);
+      model.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
       group.add(model);
 
       if (gltf.animations.length > 0) {
@@ -66,18 +89,23 @@ export function createMouse(
     });
   }
 
-  // Spawn aléatoire dans la ville, loin du centre
   function randomSpawnPosition(): THREE.Vector3 {
     const margin = 4;
-    const x = THREE.MathUtils.randFloat(
-      cityBoundary.minX + margin,
-      cityBoundary.maxX - margin,
-    );
-    const z = THREE.MathUtils.randFloat(
-      cityBoundary.minZ + margin,
-      cityBoundary.maxZ - margin,
-    );
-    return new THREE.Vector3(x, 0.1, z);
+    let pos: THREE.Vector3;
+    let attempts = 0;
+    do {
+      const x = THREE.MathUtils.randFloat(
+        cityBoundary.minX + margin,
+        cityBoundary.maxX - margin,
+      );
+      const z = THREE.MathUtils.randFloat(
+        cityBoundary.minZ + margin,
+        cityBoundary.maxZ - margin,
+      );
+      pos = new THREE.Vector3(x, 0.1, z);
+      attempts++;
+    } while (collidesWithBuildings(pos) && attempts < 20);
+    return pos;
   }
 
   function spawn() {
@@ -90,16 +118,17 @@ export function createMouse(
     loadModel();
   }
 
-  //  État IA
   let caught = false;
-  let respawnTimer = 0; // >0 = en attente de respawn
+  let respawnTimer = 0;
   let wanderAngle = Math.random() * Math.PI * 2;
   let wanderTimer = 0;
   let nextWanderChange = randomInterval();
   let panicTimer = 0;
 
-  // Premier spawn
-  spawn();
+  setTimeout(() => {
+    refreshBuildingBoxes();
+    spawn();
+  }, 2500);
 
   function randomInterval() {
     return (
@@ -152,9 +181,7 @@ export function createMouse(
     if (hitX || hitZ) wanderAngle += Math.PI + (Math.random() - 0.5);
   }
 
-  //  Update
   function update(delta: number, playerPosition: THREE.Vector3) {
-    // Gestion du respawn
     if (caught) {
       respawnTimer += delta;
       if (respawnTimer >= RESPAWN_DELAY) spawn();
@@ -163,11 +190,9 @@ export function createMouse(
 
     if (mixer) mixer.update(delta);
 
-    // const elapsed = getElapsedTime();
     const elapsed = 3;
     const speed = currentSpeed(elapsed);
 
-    // Direction de base
     const toPlayer = new THREE.Vector3()
       .subVectors(group.position, playerPosition)
       .setY(0);
@@ -204,14 +229,19 @@ export function createMouse(
     }
 
     const freeDir = obstacleAvoidance(group.position, desiredDir);
-    const nextPos = group.position
+
+    const candidatePos = group.position
       .clone()
       .addScaledVector(freeDir, speed * delta);
-    nextPos.y = 0.1;
-    clampToBoundary(nextPos);
-    group.position.copy(nextPos);
+    candidatePos.y = 0.1;
+    clampToBoundary(candidatePos);
 
-    // Rotation douce
+    if (!collidesWithBuildings(candidatePos)) {
+      group.position.copy(candidatePos);
+    } else {
+      wanderAngle += Math.PI * (0.5 + Math.random());
+    }
+
     const targetAngle = Math.atan2(freeDir.x, freeDir.z);
     const angleDiff =
       THREE.MathUtils.euclideanModulo(
@@ -221,14 +251,13 @@ export function createMouse(
     group.rotation.y += angleDiff * Math.min(delta * 10, 1);
   }
 
-  //  Capture
   function catchAnimal() {
     if (caught) return;
     caught = true;
     group.visible = false;
     if (catchSound.isPlaying) catchSound.stop();
     catchSound.play();
-    onCatch(); 
+    onCatch();
   }
 
   return {
@@ -236,5 +265,6 @@ export function createMouse(
     update,
     catchAnimal,
     isCaught: () => caught,
+    refreshBuildingBoxes,
   };
 }
